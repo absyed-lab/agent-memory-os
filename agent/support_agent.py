@@ -1,17 +1,23 @@
-﻿import os
+import os
+import json
+import time
+import datetime
 from dotenv import load_dotenv
-
 load_dotenv()
 
-# Auto-detect: use Groq if key exists, fallback to Ollama
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+def get_groq_key() -> str:
+    try:
+        import streamlit as st
+        return st.secrets["GROQ_API_KEY"]
+    except:
+        return os.getenv("GROQ_API_KEY", "")
+
+GROQ_API_KEY = get_groq_key()
 USE_GROQ = bool(GROQ_API_KEY)
 
 if USE_GROQ:
     from groq import Groq
     groq_client = Groq(api_key=GROQ_API_KEY)
-else:
-    import ollama
 
 from memory import ShortTermMemory, LongTermMemory, EpisodicMemory, ReflectionMemory
 
@@ -23,9 +29,23 @@ You have access to the customer history and previous interactions.
 Always be helpful and concise. Reference past context when relevant.
 Never say based on my memory, just use the information naturally."""
 
+METRICS_PATH = "./data/metrics.json"
 
-def chat_with_llm(messages: list, system: str) -> str:
-    """Single function that handles both Groq and Ollama."""
+def load_metrics() -> list:
+    if os.path.exists(METRICS_PATH):
+        with open(METRICS_PATH, "r") as f:
+            return json.load(f)
+    return []
+
+def save_metric(entry: dict) -> None:
+    metrics = load_metrics()
+    metrics.append(entry)
+    os.makedirs("./data", exist_ok=True)
+    with open(METRICS_PATH, "w") as f:
+        json.dump(metrics, f, indent=2)
+
+def chat_with_llm(messages: list, system: str) -> tuple:
+    start = time.time()
     if USE_GROQ:
         full_messages = [{"role": "system", "content": system}] + messages
         response = groq_client.chat.completions.create(
@@ -33,14 +53,18 @@ def chat_with_llm(messages: list, system: str) -> str:
             messages=full_messages,
             max_tokens=1000
         )
-        return response.choices[0].message.content
+        text = response.choices[0].message.content
+        tokens = response.usage.total_tokens
     else:
         import ollama
         response = ollama.chat(
             model=DEFAULT_MODEL_OLLAMA,
             messages=[{"role": "system", "content": system}] + messages
         )
-        return response['message']['content']
+        text = response['message']['content']
+        tokens = len(text) // 4
+    latency = round(time.time() - start, 2)
+    return text, latency, tokens
 
 
 class CustomerSupportAgent:
@@ -48,7 +72,6 @@ class CustomerSupportAgent:
         self.customer_id = customer_id
         self.model = DEFAULT_MODEL_GROQ if USE_GROQ else DEFAULT_MODEL_OLLAMA
         self.backend = "groq" if USE_GROQ else "ollama"
-
         self.short_term = ShortTermMemory(max_messages=20)
         self.long_term = LongTermMemory(collection_name=f"customer_{customer_id}")
         self.episodic = EpisodicMemory(
@@ -94,7 +117,20 @@ class CustomerSupportAgent:
             role = entry.metadata.get("role", "user")
             api_messages.append({"role": role, "content": entry.content})
         api_messages.append({"role": "user", "content": user_message})
-        assistant_message = chat_with_llm(api_messages, system)
+
+        assistant_message, latency, tokens = chat_with_llm(api_messages, system)
+
+        save_metric({
+            "customer_id": self.customer_id,
+            "turn": self.turn_count,
+            "latency_seconds": latency,
+            "tokens_used": tokens,
+            "memory_facts": self.long_term.summary()["document_count"],
+            "episodes": self.episodic.summary()["episode_count"],
+            "backend": self.backend,
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        })
+
         self.short_term.store(assistant_message, metadata={"role": "assistant"})
         if self.turn_count % self.REFLECTION_INTERVAL == 0:
             self._run_reflection()
