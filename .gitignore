@@ -1,6 +1,7 @@
-﻿.env
+.env
 chroma_db/
 data/
+episodes.json
 __pycache__/
 *.pyc
 .streamlit/secrets.toml
