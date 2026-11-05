@@ -40,6 +40,15 @@ python main.py            # terminal chat
 
 On first run ChromaDB downloads a small embedding model, so you need internet access once.
 
+## Tests
+
+```bash
+pip install pytest
+python -m pytest tests/
+```
+
+The tests need no network or API key. GitHub Actions runs them on every push.
+
 ## Project structure
 
 ```
@@ -54,6 +63,7 @@ agent/
 ui/
   app.py           Streamlit chat with memory panels
   pages/metrics.py latency and token charts
+tests/             pytest unit tests
 main.py            terminal interface
 ```
 
@@ -67,7 +77,7 @@ No systematic evaluation yet. The metrics page shows latency and tokens per repl
 - With Ollama, token counts are estimated as characters / 4, not counted by the model.
 - Memories are not pruned or merged automatically, so stored memory grows with every session.
 - Reflections are not saved to disk, so they are lost when the app restarts.
-- No test suite yet.
+- Tests cover the short-term and episodic layers only, with the LLM call stubbed. The long-term, reflection and agent code is not tested yet.
 
 ## Author
 
